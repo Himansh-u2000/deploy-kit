@@ -1,0 +1,61 @@
+{
+  "name": "deploy-kit",
+  "version": "1.0.0",
+  "description": "One-command VPS deployment CLI — automates server setup, Node.js deployment, Nginx, PM2, and SSL on Ubuntu servers",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "deploykit": "./bin/cli.js"
+  },
+  "scripts": {
+    "start": "node bin/cli.js",
+    "test": "node tests/validator.test.js",
+    "lint": "echo \"No linting configured yet\""
+  },
+  "keywords": [
+    "deploy",
+    "vps",
+    "deployment",
+    "nginx",
+    "pm2",
+    "ssl",
+    "ubuntu",
+    "digitalocean",
+    "droplet",
+    "devops",
+    "cli",
+    "server",
+    "automation",
+    "node",
+    "certbot",
+    "lets-encrypt"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Himansh-u2000/deploy-kit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Himansh-u2000/deploy-kit/issues"
+  },
+  "homepage": "https://github.com/Himansh-u2000/deploy-kit#readme",
+  "files": [
+    "bin/",
+    "src/",
+    "install.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "boxen": "^7.1.1",
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.5",
+    "commander": "^12.1.0",
+    "inquirer": "^9.3.7",
+    "ora": "^8.1.1"
+  }
+}
