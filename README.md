@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/Himansh-u2000/deploy-kit/main/insta
 ### Option 2: npm (if Node.js is already installed)
 
 ```bash
-npm install -g deploy-kit
+npm install -g deploykit-cli
 ```
 
 ---

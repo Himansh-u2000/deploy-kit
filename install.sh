@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # DeployKit Installer
-# Installs Node.js (if not present) and deploy-kit CLI on Ubuntu servers.
+# Installs Node.js (if not present) and deploykit-cli CLI on Ubuntu servers.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Himansh-u2000/deploy-kit/main/install.sh | bash
@@ -104,23 +104,23 @@ else
     exit 1
 fi
 
-# ── Install deploy-kit ────────────────────────────────────────────
-info "Installing deploy-kit globally..."
+# ── Install deploykit-cli ────────────────────────────────────────────
+info "Installing deploykit-cli globally..."
 
-npm install -g deploy-kit > /dev/null 2>&1
+npm install -g deploykit-cli > /dev/null 2>&1
 
 if command -v deploykit &> /dev/null; then
-    success "deploy-kit installed successfully!"
+    success "deploykit-cli installed successfully!"
 else
     # Fallback — try with explicit path
     warn "deploykit not found in PATH — trying alternate install..."
     NPM_GLOBAL=$(npm root -g)
     if [ -f "$NPM_GLOBAL/../bin/deploykit" ]; then
-        success "deploy-kit installed (may need PATH update)"
+        success "deploykit-cli installed (may need PATH update)"
     else
-        error "Failed to install deploy-kit"
+        error "Failed to install deploykit-cli"
         echo "  Try installing manually:"
-        echo "  npm install -g deploy-kit"
+        echo "  npm install -g deploykit-cli"
         exit 1
     fi
 fi
