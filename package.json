@@ -1,6 +1,6 @@
 {
   "name": "deploykit-cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "One-command VPS deployment CLI — automates server setup, Node.js deployment, Nginx, PM2, and SSL on Ubuntu servers",
   "type": "module",
   "main": "src/index.js",
