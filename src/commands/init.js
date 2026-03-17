@@ -13,7 +13,7 @@ import { setupEnv } from '../modules/env.js';
 import { setupPm2 } from '../modules/pm2.js';
 import { setupNginx } from '../modules/nginx.js';
 import { setupSsl } from '../modules/ssl.js';
-import { PROJECT_TYPES } from '../utils/constants.js';
+import { PROJECT_TYPES, DEPLOYKIT_CONFIG_DIR } from '../utils/constants.js';
 
 /**
  * Run the full interactive deployment setup.
