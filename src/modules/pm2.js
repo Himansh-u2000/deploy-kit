@@ -17,7 +17,7 @@ import { PROJECT_TYPES, PM2_MAX_MEMORY } from '../utils/constants.js';
  * @param {string} options.entryPoint - Entry point file (e.g., server.js)
  * @param {number} options.port - Application port
  */
-export async function setupPm2({ projectName, projectPath, type, entryPoint, port }) {
+export async function setupPm2({ projectName, projectPath, type, entryPoint, port, serverDir }) {
   logger.step(5, 7, '⚡', 'PM2 Setup');
 
   // ── Skip PM2 for static/react sites ────────────────────────────
@@ -26,14 +26,18 @@ export async function setupPm2({ projectName, projectPath, type, entryPoint, por
     return;
   }
 
+  // ── Determine working directory ────────────────────────────────
+  let workDir = projectPath;
+  if (type === PROJECT_TYPES.FULLSTACK && serverDir) {
+    workDir = `${projectPath}/${serverDir}`;
+  }
+
   // ── Build PM2 start command ────────────────────────────────────
   let pm2Cmd;
 
   if (type === PROJECT_TYPES.NEXTJS) {
-    // Next.js — use npm start with PM2
     pm2Cmd = `pm2 start npm --name "${projectName}" --max-memory-restart ${PM2_MAX_MEMORY} -- start`;
   } else {
-    // Express / Node.js
     pm2Cmd = `pm2 start ${entryPoint} --name "${projectName}" --max-memory-restart ${PM2_MAX_MEMORY}`;
   }
 
@@ -63,7 +67,7 @@ export async function setupPm2({ projectName, projectPath, type, entryPoint, por
     if (action === 'restart') {
       const restartSpinner = logger.spinner('Restarting with PM2...');
       try {
-        shell.exec(`cd ${projectPath} && pm2 restart "${projectName}"`);
+        shell.exec(`cd ${workDir} && pm2 restart "${projectName}"`);
         restartSpinner.succeed(`${projectName} restarted with PM2`);
       } catch (err) {
         restartSpinner.fail('Failed to restart');
@@ -80,7 +84,7 @@ export async function setupPm2({ projectName, projectPath, type, entryPoint, por
   // ── Start with PM2 ────────────────────────────────────────────
   const pm2Spinner = logger.spinner(`Starting ${projectName} with PM2...`);
   try {
-    shell.exec(`cd ${projectPath} && ${pm2Cmd}`);
+    shell.exec(`cd ${workDir} && ${pm2Cmd}`);
     pm2Spinner.succeed(`${projectName} started with PM2`);
   } catch (err) {
     pm2Spinner.fail('Failed to start with PM2');

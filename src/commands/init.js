@@ -54,6 +54,7 @@ export async function initCommand() {
       type: projectConfig.type,
       entryPoint: projectConfig.entryPoint,
       port: projectConfig.port,
+      serverDir: projectConfig.serverDir,
     });
 
     // ── Step 6: Nginx Configuration ────────────────────────────────

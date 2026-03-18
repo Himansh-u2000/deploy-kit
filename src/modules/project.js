@@ -1,27 +1,154 @@
 /**
  * DeployKit — Project Detection Module
  * Detects project type, entry points, and prompts for port configuration.
+ * Supports single-type and fullstack (client/ + server/) projects.
  */
 
 import { existsSync, readFileSync } from 'fs';
 import inquirer from 'inquirer';
 import logger from '../utils/logger.js';
+import shell from '../utils/shell.js';
 import validator from '../utils/validator.js';
 import { PROJECT_TYPES, DEFAULT_PORT } from '../utils/constants.js';
 
 /**
  * Detect project type and gather configuration.
  * @param {string} projectPath - Absolute path to the project directory
- * @returns {Promise<{ type: string, entryPoint: string|null, port: number|null, buildDir: string|null }>}
+ * @returns {Promise<object>} Project configuration
  */
 export async function detectProject(projectPath) {
   logger.step(3, 7, '🔍', 'Project Detection');
 
+  // ── Check for fullstack structure first ────────────────────────
+  const hasClient = existsSync(`${projectPath}/client`) || existsSync(`${projectPath}/frontend`);
+  const hasServer = existsSync(`${projectPath}/server`) || existsSync(`${projectPath}/backend`);
+
+  if (hasClient && hasServer) {
+    return await detectFullstack(projectPath);
+  }
+
+  // ── Single project type detection ──────────────────────────────
+  return await detectSingleProject(projectPath);
+}
+
+/**
+ * Detect and configure a fullstack project (client + server)
+ */
+async function detectFullstack(projectPath) {
+  const clientDir = existsSync(`${projectPath}/client`) ? 'client' : 'frontend';
+  const serverDir = existsSync(`${projectPath}/server`) ? 'server' : 'backend';
+
+  logger.success(`Detected: Fullstack project`);
+  logger.success(`Client: ${clientDir}/`);
+  logger.success(`Server: ${serverDir}/`);
+
+  const clientPath = `${projectPath}/${clientDir}`;
+  const serverPath = `${projectPath}/${serverDir}`;
+
+  // ── Detect client build directory ──────────────────────────────
+  let buildDir = null;
+  if (existsSync(`${clientPath}/dist`)) buildDir = `${clientDir}/dist`;
+  else if (existsSync(`${clientPath}/build`)) buildDir = `${clientDir}/build`;
+
+  if (buildDir) {
+    logger.success(`Client build dir: ${buildDir}`);
+  } else {
+    logger.warn(`No dist/ or build/ folder found in ${clientDir}/`);
+    const { customBuildDir } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'customBuildDir',
+        message: `Where is the client build output? (relative to project root):`,
+        default: `${clientDir}/dist`,
+      },
+    ]);
+    buildDir = customBuildDir;
+  }
+
+  // ── Detect server entry point ──────────────────────────────────
+  let serverPkg = null;
+  const serverPkgPath = `${serverPath}/package.json`;
+  if (existsSync(serverPkgPath)) {
+    try {
+      serverPkg = JSON.parse(readFileSync(serverPkgPath, 'utf-8'));
+    } catch {}
+  }
+
+  const entryPoint = detectEntryPoint(serverPkg, serverPath);
+  logger.success(`Server entry point: ${entryPoint}`);
+
+  // ── Prompt for server port ─────────────────────────────────────
+  const { appPort } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'appPort',
+      message: 'What port does your server/API run on?',
+      default: String(DEFAULT_PORT),
+      validate: validator.isValidPort,
+    },
+  ]);
+  const port = parseInt(appPort, 10);
+  logger.success(`Server port: ${port}`);
+
+  // ── Install server dependencies ────────────────────────────────
+  if (existsSync(serverPkgPath)) {
+    const depSpinner = logger.spinner(`Installing server dependencies...`);
+    try {
+      const hasLockfile = existsSync(`${serverPath}/package-lock.json`);
+      const cmd = hasLockfile ? 'npm ci --production' : 'npm install --production';
+      shell.exec(`cd ${serverPath} && ${cmd}`);
+      depSpinner.succeed('Server dependencies installed');
+    } catch (err) {
+      depSpinner.fail('Failed to install server dependencies');
+      logger.dim(err.message);
+    }
+  }
+
+  // ── Show summary ───────────────────────────────────────────────
+  const config = {
+    type: PROJECT_TYPES.FULLSTACK,
+    entryPoint,
+    port,
+    buildDir,
+    clientDir,
+    serverDir,
+  };
+
+  logger.newline();
+  logger.table(
+    ['Setting', 'Value'],
+    [
+      ['Project Type', 'fullstack (client + server)'],
+      ['Client Build', buildDir],
+      ['Server Entry', `${serverDir}/${entryPoint}`],
+      ['Server Port', String(port)],
+    ]
+  );
+
+  const { confirmed } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'confirmed',
+      message: 'Does this look correct?',
+      default: true,
+    },
+  ]);
+
+  if (!confirmed) {
+    return await manualConfig(projectPath);
+  }
+
+  return config;
+}
+
+/**
+ * Detect a single-type project (Express, React, Next.js, static)
+ */
+async function detectSingleProject(projectPath) {
   let projectType = PROJECT_TYPES.UNKNOWN;
   let entryPoint = null;
   let buildDir = null;
 
-  // ── Read package.json ──────────────────────────────────────────
   const pkgPath = `${projectPath}/package.json`;
   let pkg = null;
 
@@ -35,14 +162,10 @@ export async function detectProject(projectPath) {
 
   if (pkg) {
     projectType = detectType(pkg, projectPath);
-  } else {
-    // No package.json — check for static site indicators
-    if (existsSync(`${projectPath}/index.html`)) {
-      projectType = PROJECT_TYPES.STATIC;
-    }
+  } else if (existsSync(`${projectPath}/index.html`)) {
+    projectType = PROJECT_TYPES.STATIC;
   }
 
-  // ── Detect entry point and build directory ─────────────────────
   switch (projectType) {
     case PROJECT_TYPES.EXPRESS: {
       entryPoint = detectEntryPoint(pkg, projectPath);
@@ -71,8 +194,6 @@ export async function detectProject(projectPath) {
     }
     default: {
       logger.warn('Could not auto-detect project type');
-
-      // Let user choose
       const { chosenType } = await inquirer.prompt([
         {
           type: 'list',
@@ -82,6 +203,7 @@ export async function detectProject(projectPath) {
             { name: 'Node.js / Express API', value: PROJECT_TYPES.EXPRESS },
             { name: 'React (pre-built dist/build folder)', value: PROJECT_TYPES.REACT },
             { name: 'Next.js', value: PROJECT_TYPES.NEXTJS },
+            { name: 'Fullstack (client + server folders)', value: PROJECT_TYPES.FULLSTACK },
             { name: 'Static website (HTML/CSS/JS)', value: PROJECT_TYPES.STATIC },
           ],
         },
@@ -94,6 +216,8 @@ export async function detectProject(projectPath) {
         buildDir = detectBuildDir(projectPath);
       } else if (chosenType === PROJECT_TYPES.NEXTJS) {
         entryPoint = 'npm start';
+      } else if (chosenType === PROJECT_TYPES.FULLSTACK) {
+        return await detectFullstack(projectPath);
       }
     }
   }
@@ -114,7 +238,6 @@ export async function detectProject(projectPath) {
     logger.success(`App port: ${port}`);
   }
 
-  // ── Confirm project configuration ──────────────────────────────
   const config = { type: projectType, entryPoint, port, buildDir };
 
   logger.newline();
@@ -144,76 +267,42 @@ export async function detectProject(projectPath) {
   return config;
 }
 
-/**
- * Detect project type from package.json dependencies and scripts
- */
 function detectType(pkg, projectPath) {
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
 
-  // Check for Next.js
-  if (deps['next']) {
-    return PROJECT_TYPES.NEXTJS;
-  }
+  if (deps['next']) return PROJECT_TYPES.NEXTJS;
 
-  // Check for React (CRA or Vite)
   if (deps['react'] && (deps['react-scripts'] || deps['vite'] || deps['@vitejs/plugin-react'])) {
-    // React project — check if dist/build folder exists (pre-built)
     return PROJECT_TYPES.REACT;
   }
 
-  // Check for Express or other Node.js servers
   if (deps['express'] || deps['fastify'] || deps['koa'] || deps['hapi'] || deps['@hapi/hapi']) {
     return PROJECT_TYPES.EXPRESS;
   }
 
-  // Check if it has a start script (generic Node.js app)
-  if (pkg.scripts?.start || pkg.main) {
-    return PROJECT_TYPES.EXPRESS;
-  }
-
-  // Check for static site
-  if (existsSync(`${projectPath}/index.html`)) {
-    return PROJECT_TYPES.STATIC;
-  }
+  if (pkg.scripts?.start || pkg.main) return PROJECT_TYPES.EXPRESS;
+  if (existsSync(`${projectPath}/index.html`)) return PROJECT_TYPES.STATIC;
 
   return PROJECT_TYPES.UNKNOWN;
 }
 
-/**
- * Detect the main entry point for Node.js apps
- */
 function detectEntryPoint(pkg, projectPath) {
-  // Check package.json main field
-  if (pkg?.main && existsSync(`${projectPath}/${pkg.main}`)) {
-    return pkg.main;
-  }
+  if (pkg?.main && existsSync(`${projectPath}/${pkg.main}`)) return pkg.main;
 
-  // Check common entry point files
   const candidates = ['server.js', 'index.js', 'app.js', 'src/server.js', 'src/index.js', 'src/app.js'];
   for (const file of candidates) {
-    if (existsSync(`${projectPath}/${file}`)) {
-      return file;
-    }
+    if (existsSync(`${projectPath}/${file}`)) return file;
   }
-
-  // Fallback
   return 'index.js';
 }
 
-/**
- * Detect the build output directory for React apps
- */
 function detectBuildDir(projectPath) {
-  // Vite outputs to dist/, CRA outputs to build/
   if (existsSync(`${projectPath}/dist`)) return 'dist';
   if (existsSync(`${projectPath}/build`)) return 'build';
   if (existsSync(`${projectPath}/public`)) return 'public';
   return null;
 }
 
-/**
- * Manual configuration fallback
- */
 async function manualConfig(projectPath) {
   const answers = await inquirer.prompt([
     {
@@ -224,6 +313,7 @@ async function manualConfig(projectPath) {
         { name: 'Node.js / Express API', value: PROJECT_TYPES.EXPRESS },
         { name: 'React (pre-built dist/build folder)', value: PROJECT_TYPES.REACT },
         { name: 'Next.js', value: PROJECT_TYPES.NEXTJS },
+        { name: 'Fullstack (client + server folders)', value: PROJECT_TYPES.FULLSTACK },
         { name: 'Static website (HTML/CSS/JS)', value: PROJECT_TYPES.STATIC },
       ],
     },
@@ -250,6 +340,10 @@ async function manualConfig(projectPath) {
       default: 'dist',
     },
   ]);
+
+  if (answers.type === PROJECT_TYPES.FULLSTACK) {
+    return await detectFullstack(projectPath);
+  }
 
   return {
     type: answers.type,

@@ -40,6 +40,7 @@ export const PROJECT_TYPES = {
   EXPRESS: 'express',
   REACT: 'react',
   NEXTJS: 'nextjs',
+  FULLSTACK: 'fullstack',
   STATIC: 'static',
   UNKNOWN: 'unknown',
 };

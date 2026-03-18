@@ -63,7 +63,12 @@ export async function setupNginx({ projectName, projectPath, type, port, buildDi
 
   // ── Generate Nginx config ──────────────────────────────────────
   let config;
-  if (type === PROJECT_TYPES.STATIC || type === PROJECT_TYPES.REACT) {
+  if (type === PROJECT_TYPES.FULLSTACK) {
+    const rootDir = buildDir ? `${projectPath}/${buildDir}` : projectPath;
+    config = generateFullstackConfig(domain, port, rootDir);
+    logger.info(`Frontend: ${rootDir}`);
+    logger.info(`API: /api → localhost:${port}`);
+  } else if (type === PROJECT_TYPES.STATIC || type === PROJECT_TYPES.REACT) {
     const rootDir = buildDir ? `${projectPath}/${buildDir}` : projectPath;
     config = generateStaticConfig(domain, rootDir);
     logger.info(`Serving static files from: ${rootDir}`);
@@ -268,6 +273,61 @@ function generateNextjsConfig(domain, port) {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
+    }
+}
+`;
+}
+
+/**
+ * Generate Nginx config for fullstack apps (static frontend + API backend)
+ */
+function generateFullstackConfig(domain, port, rootDir) {
+  const templatePath = join(TEMPLATES_DIR, 'nginx-fullstack.conf');
+  if (existsSync(templatePath)) {
+    return readFileSync(templatePath, 'utf-8')
+      .replace(/\{\{DOMAIN\}\}/g, domain)
+      .replace(/\{\{PORT\}\}/g, String(port))
+      .replace(/\{\{ROOT_DIR\}\}/g, rootDir);
+  }
+
+  return `server {
+    listen 80;
+    server_name ${domain};
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/javascript application/javascript application/json application/xml image/svg+xml;
+
+    location /api {
+        proxy_pass http://localhost:${port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        root ${rootDir};
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location / {
+        root ${rootDir};
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~ /\\. {
+        deny all;
     }
 }
 `;
