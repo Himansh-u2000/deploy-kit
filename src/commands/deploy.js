@@ -58,8 +58,8 @@ export async function deployCommand() {
  */
 async function freshDeploy() {
   const { projectName, projectPath, repoUrl, branch } = await cloneProject();
-  const projectConfig = await detectProject(projectPath);
   await setupEnv(projectPath);
+  const projectConfig = await detectProject(projectPath);
   await setupPm2({
     projectName,
     projectPath,
@@ -75,6 +75,7 @@ async function freshDeploy() {
     buildDir: projectConfig.buildDir,
   });
 
+  shell.execSafe(`chown -R www-data:www-data ${projectPath}`);
   logger.box('✅ Deployment Complete!', `Project deployed to ${projectPath}`, 'success');
 }
 
@@ -150,6 +151,9 @@ async function redeploy(projects) {
 
   // Reload Nginx
   shell.execSafe('systemctl reload nginx');
+
+  // Ensure permissions are set for Nginx
+  shell.execSafe(`chown -R www-data:www-data ${projectPath}`);
 
   logger.box('✅ Redeployment Complete!', `${project} has been updated and restarted.`, 'success');
 }

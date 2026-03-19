@@ -232,7 +232,7 @@ function generateStaticConfig(domain, rootDir) {
 
     # SPA fallback — serve index.html for all routes
     location / {
-        try_files $uri $uri/ /index.html;
+        try_files $uri $uri/ /index.html =404;
     }
 
     # Deny access to hidden files
@@ -337,7 +337,7 @@ function generateFullstackConfig(domain, port, rootDir) {
     location / {
         root ${rootDir};
         index index.html;
-        try_files $uri $uri/ /index.html;
+        try_files $uri $uri/ /index.html =404;
     }
 
     location ~ /\\. {

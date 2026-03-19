@@ -77,18 +77,20 @@ async function detectFullstack(projectPath) {
   const entryPoint = detectEntryPoint(serverPkg, serverPath);
   logger.success(`Server entry point: ${entryPoint}`);
 
-  // ── Prompt for server port ─────────────────────────────────────
-  const { appPort } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'appPort',
-      message: 'What port does your server/API run on?',
-      default: String(DEFAULT_PORT),
-      validate: validator.isValidPort,
-    },
-  ]);
-  const port = parseInt(appPort, 10);
-  logger.success(`Server port: ${port}`);
+  // ── Extract server port from .env ──────────────────────────────
+  let port = DEFAULT_PORT;
+  const envPaths = [`${serverPath}/.env`, `${projectPath}/.env`];
+  for (const envPath of envPaths) {
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, 'utf-8');
+      const match = content.match(/^PORT\s*=\s*(\d+)/m) || content.match(/^API_PORT\s*=\s*(\d+)/m);
+      if (match && match[1]) {
+        port = parseInt(match[1], 10);
+        break;
+      }
+    }
+  }
+  logger.success(`Server port: ${port} (from .env)`);
 
   // ── Install server dependencies ────────────────────────────────
   if (existsSync(serverPkgPath)) {
@@ -229,20 +231,19 @@ async function detectSingleProject(projectPath) {
     }
   }
 
-  // ── Prompt for port (Node.js and Next.js apps) ─────────────────
+  // ── Extract port from .env (Node.js and Next.js apps) ─────────────────
   let port = null;
   if (projectType === PROJECT_TYPES.EXPRESS || projectType === PROJECT_TYPES.NEXTJS) {
-    const { appPort } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'appPort',
-        message: 'What port does your app run on?',
-        default: String(DEFAULT_PORT),
-        validate: validator.isValidPort,
-      },
-    ]);
-    port = parseInt(appPort, 10);
-    logger.success(`App port: ${port}`);
+    port = DEFAULT_PORT;
+    const envPath = `${projectPath}/.env`;
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, 'utf-8');
+      const match = content.match(/^PORT\s*=\s*(\d+)/m) || content.match(/^APP_PORT\s*=\s*(\d+)/m);
+      if (match && match[1]) {
+        port = parseInt(match[1], 10);
+      }
+    }
+    logger.success(`App port: ${port} (from .env)`);
   }
 
   const config = { type: projectType, entryPoint, port, buildDir };
@@ -333,14 +334,6 @@ async function manualConfig(projectPath) {
     },
     {
       type: 'input',
-      name: 'port',
-      message: 'What port does your app run on?',
-      when: (a) => a.type === PROJECT_TYPES.EXPRESS || a.type === PROJECT_TYPES.NEXTJS,
-      default: String(DEFAULT_PORT),
-      validate: validator.isValidPort,
-    },
-    {
-      type: 'input',
       name: 'buildDir',
       message: 'Build output directory (e.g., dist, build):',
       when: (a) => a.type === PROJECT_TYPES.REACT,
@@ -351,11 +344,23 @@ async function manualConfig(projectPath) {
   if (answers.type === PROJECT_TYPES.FULLSTACK) {
     return await detectFullstack(projectPath);
   }
+  
+  // Extract port for manual config if needed
+  let port = null;
+  if (answers.type === PROJECT_TYPES.EXPRESS || answers.type === PROJECT_TYPES.NEXTJS) {
+    port = DEFAULT_PORT;
+    const envPath = `${projectPath}/.env`;
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, 'utf-8');
+      const match = content.match(/^PORT\s*=\s*(\d+)/m);
+      if (match && match[1]) port = parseInt(match[1], 10);
+    }
+  }
 
   return {
     type: answers.type,
     entryPoint: answers.entryPoint || (answers.type === PROJECT_TYPES.NEXTJS ? 'npm start' : null),
-    port: answers.port ? parseInt(answers.port, 10) : null,
+    port: port,
     buildDir: answers.buildDir || null,
   };
 }

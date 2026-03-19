@@ -41,11 +41,11 @@ export async function initCommand() {
     // ── Step 2: Clone Project ──────────────────────────────────────
     const { projectName, projectPath, repoUrl, branch } = await cloneProject();
 
-    // ── Step 3: Detect Project Type ────────────────────────────────
-    const projectConfig = await detectProject(projectPath);
-
-    // ── Step 4: Environment Variables ──────────────────────────────
+    // ── Step 3: Environment Variables ──────────────────────────────
     await setupEnv(projectPath);
+
+    // ── Step 4: Detect Project Type ────────────────────────────────
+    const projectConfig = await detectProject(projectPath);
 
     // ── Step 5: PM2 Setup ──────────────────────────────────────────
     await setupPm2({
@@ -68,6 +68,10 @@ export async function initCommand() {
 
     // ── Step 7: SSL Certificate ────────────────────────────────────
     await setupSsl(domain);
+
+    // ── Step 8: Set Nginx Permissions ──────────────────────────────
+    logger.info('Setting web server permissions...');
+    shell.execSafe(`chown -R www-data:www-data ${projectPath}`);
 
     // ── Final Summary ──────────────────────────────────────────────
     const elapsed = Math.round((Date.now() - startTime) / 1000);
