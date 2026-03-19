@@ -66,6 +66,7 @@ async function freshDeploy() {
     type: projectConfig.type,
     entryPoint: projectConfig.entryPoint,
     port: projectConfig.port,
+    serverDir: projectConfig.serverDir,
   });
   await setupNginx({
     projectName,
