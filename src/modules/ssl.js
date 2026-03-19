@@ -43,37 +43,6 @@ export async function setupSsl(domain) {
     return;
   }
 
-  // ── Check DNS resolution ───────────────────────────────────────
-  const dnsSpinner = logger.spinner('Checking DNS resolution...');
-  try {
-    const serverIp = shell.exec('curl -s ifconfig.me').trim();
-    const { success, output: dnsIp } = shell.execSafe(`dig +short ${domain}`);
-
-    if (success && dnsIp && dnsIp.trim() === serverIp) {
-      dnsSpinner.succeed(`DNS verified: ${domain} → ${serverIp}`);
-    } else {
-      dnsSpinner.warn(`DNS may not be pointing to this server (${serverIp})`);
-      logger.dim(`  Domain resolves to: ${dnsIp || 'unknown'}`);
-      logger.dim(`  Server IP:          ${serverIp}`);
-
-      const { continueAnyway } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'continueAnyway',
-          message: 'DNS might not be pointing here. Continue anyway?',
-          default: false,
-        },
-      ]);
-
-      if (!continueAnyway) {
-        logger.info('Update your DNS records and try again: deploykit ssl ' + domain);
-        return;
-      }
-    }
-  } catch {
-    dnsSpinner.warn('Could not verify DNS — continuing anyway');
-  }
-
   // ── Prompt for email ───────────────────────────────────────────
   const { email } = await inquirer.prompt([
     {
@@ -93,6 +62,45 @@ export async function setupSsl(domain) {
       default: true,
     },
   ]);
+
+  // ── Check DNS resolution ───────────────────────────────────────
+  const dnsSpinner = logger.spinner('Checking DNS resolution...');
+  const domainsToCheck = includeWww ? [domain, `www.${domain}`] : [domain];
+  let dnsOk = true;
+
+  try {
+    const serverIp = shell.exec('curl -s ifconfig.me').trim();
+    
+    for (const d of domainsToCheck) {
+      const { success, output: dnsIp } = shell.execSafe(`dig +short ${d}`);
+      if (!success || !dnsIp || dnsIp.trim() !== serverIp) {
+        dnsOk = false;
+        dnsSpinner.warn(`DNS may not be pointing to this server for ${d}`);
+        logger.dim(`  Domain resolves to: ${dnsIp || 'unknown'}`);
+        logger.dim(`  Server IP:          ${serverIp}`);
+      }
+    }
+
+    if (dnsOk) {
+      dnsSpinner.succeed(`DNS verified for ${domainsToCheck.join(' and ')}`);
+    } else {
+      const { continueAnyway } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'continueAnyway',
+          message: 'DNS might not be pointing here. Continue anyway?',
+          default: false,
+        },
+      ]);
+
+      if (!continueAnyway) {
+        logger.info('Update your DNS records and try again: deploykit ssl ' + domain);
+        return;
+      }
+    }
+  } catch {
+    dnsSpinner.warn('Could not verify DNS — continuing anyway');
+  }
 
   // ── Build Certbot command ──────────────────────────────────────
   let certbotCmd = `certbot --nginx --non-interactive --agree-tos --email ${email} -d ${domain}`;
