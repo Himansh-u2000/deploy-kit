@@ -107,6 +107,9 @@ export async function cloneProject() {
  * Pull latest changes instead of cloning
  */
 async function pullLatest(projectPath, projectName, repoUrl, branch) {
+  // Fix for 'dubious ownership' when root executes git pull on www-data owned files
+  shell.execSafe(`git config --global --add safe.directory ${projectPath}`);
+
   const pullSpinner = logger.spinner('Pulling latest changes...');
   try {
     shell.exec(`cd ${projectPath} && git pull origin ${branch}`);

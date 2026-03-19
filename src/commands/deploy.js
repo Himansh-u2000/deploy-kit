@@ -99,6 +99,8 @@ async function redeploy(projects) {
   await backupProject(project, projectPath);
 
   // Pull latest changes
+  shell.execSafe(`git config --global --add safe.directory ${projectPath}`);
+  
   const pullSpinner = logger.spinner('Pulling latest changes...');
   try {
     shell.exec(`cd ${projectPath} && git pull`);
