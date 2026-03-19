@@ -39,6 +39,7 @@ export async function setupNginx({ projectName, projectPath, type, port, buildDi
   ]);
 
   let domain;
+  let serverNames;
   if (useDomain) {
     const { domainInput } = await inquirer.prompt([
       {
@@ -49,14 +50,27 @@ export async function setupNginx({ projectName, projectPath, type, port, buildDi
       },
     ]);
     domain = domainInput;
+    
+    // Check if user wants www subdomain configured in Nginx
+    const { includeWww } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'includeWww',
+        message: `Also configure www.${domain}?`,
+        default: true,
+      },
+    ]);
+    serverNames = includeWww ? `${domain} www.${domain}` : domain;
   } else {
     // Use server IP
     try {
       const ip = shell.exec('curl -s ifconfig.me');
       domain = ip;
+      serverNames = ip;
       logger.info(`Using server IP: ${ip}`);
     } catch {
       domain = '_';
+      serverNames = '_';
       logger.warn('Could not detect server IP — using catch-all');
     }
   }
@@ -65,17 +79,17 @@ export async function setupNginx({ projectName, projectPath, type, port, buildDi
   let config;
   if (type === PROJECT_TYPES.FULLSTACK) {
     const rootDir = buildDir ? `${projectPath}/${buildDir}` : projectPath;
-    config = generateFullstackConfig(domain, port, rootDir);
+    config = generateFullstackConfig(serverNames, port, rootDir);
     logger.info(`Frontend: ${rootDir}`);
     logger.info(`API: /api → localhost:${port}`);
   } else if (type === PROJECT_TYPES.STATIC || type === PROJECT_TYPES.REACT) {
     const rootDir = buildDir ? `${projectPath}/${buildDir}` : projectPath;
-    config = generateStaticConfig(domain, rootDir);
+    config = generateStaticConfig(serverNames, rootDir);
     logger.info(`Serving static files from: ${rootDir}`);
   } else if (type === PROJECT_TYPES.NEXTJS) {
-    config = generateNextjsConfig(domain, port);
+    config = generateNextjsConfig(serverNames, port);
   } else {
-    config = generateNodeConfig(domain, port);
+    config = generateNodeConfig(serverNames, port);
   }
 
   // ── Write config file ─────────────────────────────────────────

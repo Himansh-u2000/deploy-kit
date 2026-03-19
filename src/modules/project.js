@@ -95,8 +95,15 @@ async function detectFullstack(projectPath) {
     const depSpinner = logger.spinner(`Installing server dependencies...`);
     try {
       const hasLockfile = existsSync(`${serverPath}/package-lock.json`);
-      const cmd = hasLockfile ? 'npm ci --production' : 'npm install --production';
-      shell.exec(`cd ${serverPath} && ${cmd}`);
+      if (hasLockfile) {
+        try {
+          shell.exec(`cd "${serverPath}" && npm ci --omit=dev`);
+        } catch {
+          shell.exec(`cd "${serverPath}" && npm install --omit=dev`);
+        }
+      } else {
+        shell.exec(`cd "${serverPath}" && npm install --omit=dev`);
+      }
       depSpinner.succeed('Server dependencies installed');
     } catch (err) {
       depSpinner.fail('Failed to install server dependencies');
