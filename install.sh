@@ -85,6 +85,12 @@ else
     curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - > /dev/null 2>&1
     apt-get install -y -qq nodejs > /dev/null 2>&1
 
+    # Ubuntu/Debian native repos separate npm from nodejs. 
+    # If NodeSource failed and it installed the native nodejs, it might be missing npm.
+    if ! command -v npm &> /dev/null; then
+        apt-get install -y -qq npm > /dev/null 2>&1
+    fi
+
     if command -v node &> /dev/null; then
         success "Node.js $(node --version) installed"
     else
