@@ -67,7 +67,7 @@ export async function initCommand() {
     });
 
     // ── Step 7: SSL Certificate ────────────────────────────────────
-    await setupSsl(domain);
+    const sslInstalled = await setupSsl(domain);
 
     // ── Step 8: Set Nginx Permissions ──────────────────────────────
     logger.info('Setting web server permissions...');
@@ -76,10 +76,16 @@ export async function initCommand() {
     // ── Final Summary ──────────────────────────────────────────────
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     const isStatic = projectConfig.type === PROJECT_TYPES.STATIC || projectConfig.type === PROJECT_TYPES.REACT;
+    const hasDomain = domain && !/^\d+\.\d+\.\d+\.\d+$/.test(domain) && domain !== '_';
+    const accessUrl = hasDomain ? domain : shell.execSafe('curl -s ifconfig.me').output?.trim() || domain;
+    const accessLine = hasDomain
+      ? sslInstalled
+        ? `🔒  https://${domain}`
+        : `🌐  http://${domain}`
+      : `🌐  http://${accessUrl}`;
 
     const summaryLines = [
-      `🌐  http://${domain}`,
-      `🔒  https://${domain}`,
+      accessLine,
       '',
       `📁  Project: ${projectPath}`,
       `🔗  Repo:    ${repoUrl}`,
@@ -96,7 +102,7 @@ export async function initCommand() {
     ];
 
     if (!isStatic) {
-      summaryLines.splice(5, 0, `⚡  PM2:     ${projectName}`);
+      summaryLines.splice(4, 0, `⚡  PM2:     ${projectName}`);
     }
 
     logger.box('✅ Deployment Complete!', summaryLines.join('\n'), 'success');

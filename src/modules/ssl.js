@@ -19,7 +19,7 @@ export async function setupSsl(domain) {
   if (!domain || /^\d+\.\d+\.\d+\.\d+$/.test(domain) || domain === '_') {
     logger.warn('SSL requires a domain name (cannot use IP address)');
     logger.info('Point a domain to this server, then run: deploykit ssl <domain>');
-    return;
+    return false;
   }
 
   // ── Ask if user wants SSL ──────────────────────────────────────
@@ -34,13 +34,13 @@ export async function setupSsl(domain) {
 
   if (!wantSsl) {
     logger.info(`You can setup SSL later with: deploykit ssl ${domain}`);
-    return;
+    return false;
   }
 
   // ── Check if Certbot is installed ──────────────────────────────
   if (!shell.isInstalled('certbot')) {
     logger.error('Certbot is not installed. Run: apt install certbot python3-certbot-nginx');
-    return;
+    return false;
   }
 
   // ── Prompt for email ───────────────────────────────────────────
@@ -95,7 +95,7 @@ export async function setupSsl(domain) {
 
       if (!continueAnyway) {
         logger.info('Update your DNS records and try again: deploykit ssl ' + domain);
-        return;
+        return false;
       }
     }
   } catch {
@@ -120,7 +120,7 @@ export async function setupSsl(domain) {
     logger.dim('  • Domain not pointing to this server');
     logger.dim('  • Port 80 not accessible (check firewall)');
     logger.dim('  • Rate limit reached (try again later)');
-    return;
+    return false;
   }
 
   // ── Verify auto-renewal ────────────────────────────────────────
@@ -133,6 +133,7 @@ export async function setupSsl(domain) {
   }
 
   logger.success(`🔒 https://${domain} is now secured with SSL`);
+  return true;
 }
 
 /**
