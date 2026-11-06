@@ -37,7 +37,7 @@
     "certbot",
     "lets-encrypt"
   ],
-  "author": "",
+  "author": "Himanshu Haldar (https://github.com/Himansh-u2000)",
   "license": "MIT",
   "engines": {
     "node": ">=22.12.0"

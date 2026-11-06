@@ -201,9 +201,17 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
 
+## 👤 Author
+
+**Himanshu Haldar** — [@Himansh-u2000](https://github.com/Himansh-u2000)
+
+Found a bug or have an idea? [Open an issue](https://github.com/Himansh-u2000/deploy-kit/issues).
+
+---
+
 ## 📄 License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License © 2026 Himanshu Haldar — see [LICENSE](LICENSE) for details.
 
 ---
 
