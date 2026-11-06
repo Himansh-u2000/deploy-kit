@@ -70,17 +70,22 @@ describe('generateConfig', () => {
   it('produces configs that pass `nginx -t`', { skip: !hasNginx && 'nginx not installed' }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'deploykit-nginx-'));
     try {
-      const includes = Object.entries(configs).map(([type, conf]) => {
+      // CI runners are not root: `nginx -t` binds the listen ports, so move
+      // them off privileged port 80, and keep every writable path in `dir`.
+      const includes = Object.entries(configs).map(([type, conf], i) => {
         const file = join(dir, `${type}.conf`);
-        writeFileSync(file, conf);
+        writeFileSync(file, conf.replace(/listen 80;/g, `listen 127.0.0.1:${18080 + i};`));
         return `include ${file};`;
       });
+      const tempPaths = ['client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi']
+        .map((name) => `${name}_temp_path ${dir}/${name};`)
+        .join('\n  ');
       const main = join(dir, 'nginx.conf');
       writeFileSync(
         main,
-        `pid ${dir}/nginx.pid;\nerror_log ${dir}/error.log;\nevents {}\nhttp {\n  access_log off;\n  ${includes.join('\n  ')}\n}\n`
+        `pid ${dir}/nginx.pid;\nerror_log ${dir}/error.log;\nevents {}\nhttp {\n  access_log off;\n  ${tempPaths}\n  ${includes.join('\n  ')}\n}\n`
       );
-      execSync(`nginx -t -q -c ${main} -p ${dir}`, { stdio: 'pipe' });
+      execSync(`nginx -t -q -e ${dir}/error.log -c ${main} -p ${dir}`, { stdio: 'pipe' });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
