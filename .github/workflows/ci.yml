@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - name: CLI smoke test
+        run: |
+          node bin/cli.js --version
+          node bin/cli.js --help
+      - name: Verify published file list
+        run: npm pack --dry-run
+      - name: Lint install.sh
+        if: matrix.node == 24
+        run: shellcheck install.sh

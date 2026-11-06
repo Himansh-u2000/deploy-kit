@@ -4,8 +4,8 @@
  * Supports monorepo/fullstack projects with client/ and server/ subdirectories.
  */
 
-import { existsSync, copyFileSync, readdirSync } from 'fs';
-import inquirer from 'inquirer';
+import { existsSync, copyFileSync, writeFileSync, chmodSync } from 'fs';
+import { confirm } from '@inquirer/prompts';
 import logger from '../utils/logger.js';
 import shell from '../utils/shell.js';
 
@@ -20,7 +20,7 @@ const SUBDIR_NAMES = ['server', 'client', 'backend', 'frontend', 'api', 'web', '
  * @param {string} projectPath - Absolute path to the project directory
  */
 export async function setupEnv(projectPath) {
-  logger.step(4, 7, '🔐', 'Environment Variables');
+  logger.step(3, 7, '🔐', 'Environment Variables');
 
   // ── Find all .env.example files (root + subdirs) ───────────────
   const envLocations = findEnvFiles(projectPath);
@@ -29,18 +29,20 @@ export async function setupEnv(projectPath) {
     // No .env.example found anywhere
     logger.info('No .env.example or .env.sample found in project');
 
-    const { createEnv } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'createEnv',
-        message: 'Create an empty .env file in the project root?',
-        default: true,
-      },
-    ]);
+    const envPath = `${projectPath}/.env`;
+    if (existsSync(envPath)) {
+      logger.success('.env already exists in root/');
+      await editEnvFile(envPath, 'root');
+      return;
+    }
+
+    const createEnv = await confirm({
+      message: 'Create an empty .env file in the project root?',
+      default: true,
+    });
 
     if (createEnv) {
-      const envPath = `${projectPath}/.env`;
-      shell.execSafe(`touch ${envPath}`);
+      writeFileSync(envPath, '', { mode: 0o600 });
       await editEnvFile(envPath, 'root');
     }
     return;
@@ -123,6 +125,7 @@ async function processEnvFile(loc) {
   // Copy template if .env doesn't already exist
   if (!existsSync(loc.envPath)) {
     copyFileSync(loc.templatePath, loc.envPath);
+    restrictPermissions(loc.envPath);
     logger.success(`Created .env from ${loc.templateName} in ${loc.label}/`);
   } else {
     logger.success(`.env already exists in ${loc.label}/`);
@@ -137,14 +140,10 @@ async function processEnvFile(loc) {
  * @param {string} label - Display label (e.g., 'root', 'server', 'client')
  */
 async function editEnvFile(envPath, label) {
-  const { wantEdit } = await inquirer.prompt([
-    {
-      type: 'confirm',
-      name: 'wantEdit',
-      message: `Edit .env for ${label}?`,
-      default: true,
-    },
-  ]);
+  const wantEdit = await confirm({
+    message: `Edit .env for ${label}?`,
+    default: true,
+  });
 
   if (wantEdit) {
     const editor = detectEditor();
@@ -163,10 +162,21 @@ async function editEnvFile(envPath, label) {
 }
 
 /**
+ * .env files hold secrets — make them readable by the owner only.
+ * @param {string} filePath
+ */
+function restrictPermissions(filePath) {
+  try {
+    chmodSync(filePath, 0o600);
+  } catch {}
+}
+
+/**
  * Detect the best available text editor
  * @returns {string} Editor command
  */
 function detectEditor() {
+  if (process.env.VISUAL) return process.env.VISUAL;
   if (process.env.EDITOR) return process.env.EDITOR;
   if (shell.isInstalled('nano')) return 'nano';
   if (shell.isInstalled('vim')) return 'vim';

@@ -7,7 +7,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/Himansh-u2000/deploy-kit/main/install.sh | bash
 #
 
-set -e
+set -euo pipefail
 
 # ── Colors ────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -40,16 +40,20 @@ echo ""
 
 # ── Check OS ──────────────────────────────────────────────────────
 if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
     . /etc/os-release
-    OS=$ID
-    VERSION=$VERSION_ID
-    success "Detected: $PRETTY_NAME"
+    success "Detected: ${PRETTY_NAME:-unknown}"
+    # Node.js 22+ needs glibc >= 2.28 (Ubuntu 20.04+ / Debian 10+)
+    if [ "${ID:-}" = "ubuntu" ] && [ "${VERSION_ID%%.*}" -lt 20 ] 2>/dev/null; then
+        error "Ubuntu ${VERSION_ID} is too old — Node.js 22+ requires Ubuntu 20.04 or newer"
+        exit 1
+    fi
 else
     warn "Could not detect OS — continuing anyway (designed for Ubuntu/Debian)"
 fi
 
 # ── Check root ────────────────────────────────────────────────────
-if [ "$EUID" -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ]; then
     error "This installer must be run as root"
     echo ""
     echo "  Run with:"
@@ -66,26 +70,48 @@ case $ARCH in
     *) warn "Architecture: $ARCH (may have limited support)" ;;
 esac
 
-# ── Install Node.js if not present ────────────────────────────────
-NODE_VERSION="20"
+# ── Install Node.js if not present (or too old) ──────────────────
+# Node.js 18 and 20 are end-of-life. 24 is the recommended LTS.
+NODE_VERSION="${DEPLOYKIT_NODE_VERSION:-24}"
+MIN_NODE_MAJOR=22
+MIN_NODE_MINOR=12
+export DEBIAN_FRONTEND=noninteractive
 
-if command -v node &> /dev/null; then
-    CURRENT_NODE=$(node --version)
-    success "Node.js $CURRENT_NODE is already installed"
+node_is_supported() {
+    command -v node &> /dev/null || return 1
+    local ver major minor
+    ver=$(node --version | sed 's/^v//')
+    major=${ver%%.*}
+    minor=$(echo "$ver" | cut -d. -f2)
+    [ "$major" -gt "$MIN_NODE_MAJOR" ] || { [ "$major" -eq "$MIN_NODE_MAJOR" ] && [ "$minor" -ge "$MIN_NODE_MINOR" ]; }
+}
+
+if node_is_supported; then
+    success "Node.js $(node --version) is already installed"
 else
-    info "Installing Node.js $NODE_VERSION LTS..."
-
-    # Install curl if not present
-    if ! command -v curl &> /dev/null; then
-        apt-get update -y -qq > /dev/null 2>&1
-        apt-get install -y -qq curl > /dev/null 2>&1
+    if command -v node &> /dev/null; then
+        warn "Node.js $(node --version) is too old (DeployKit needs >= ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR})"
+        info "Upgrading to Node.js $NODE_VERSION LTS..."
+    else
+        info "Installing Node.js $NODE_VERSION LTS..."
     fi
 
-    # Install Node.js via NodeSource
-    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - > /dev/null 2>&1
-    apt-get install -y -qq nodejs > /dev/null 2>&1
+    # Install curl / certificates if not present
+    if ! command -v curl &> /dev/null; then
+        apt-get update -y -qq > /dev/null 2>&1
+        apt-get install -y -qq curl ca-certificates > /dev/null 2>&1
+    fi
 
-    if command -v node &> /dev/null; then
+    # Install Node.js via NodeSource (logs kept for troubleshooting)
+    NODE_LOG=/tmp/deploykit-node-install.log
+    if ! { curl -fsSL "https://deb.nodesource.com/setup_${NODE_VERSION}.x" | bash - && apt-get install -y nodejs; } > "$NODE_LOG" 2>&1; then
+        error "Node.js installation failed — see $NODE_LOG"
+        tail -n 15 "$NODE_LOG" | sed 's/^/    /'
+        exit 1
+    fi
+    hash -r
+
+    if node_is_supported; then
         success "Node.js $(node --version) installed"
     else
         error "Failed to install Node.js"
@@ -113,16 +139,22 @@ fi
 # ── Install deploykit-cli ────────────────────────────────────────────
 info "Installing deploykit-cli globally..."
 
-npm install -g deploykit-cli > /dev/null 2>&1
+NPM_LOG=/tmp/deploykit-npm-install.log
+if ! npm install -g deploykit-cli@latest > "$NPM_LOG" 2>&1; then
+    error "npm install failed — see $NPM_LOG"
+    tail -n 15 "$NPM_LOG" | sed 's/^/    /'
+    exit 1
+fi
+hash -r
 
 if command -v deploykit &> /dev/null; then
-    success "deploykit-cli installed successfully!"
+    success "deploykit $(deploykit --version) installed successfully!"
 else
-    # Fallback — try with explicit path
-    warn "deploykit not found in PATH — trying alternate install..."
-    NPM_GLOBAL=$(npm root -g)
-    if [ -f "$NPM_GLOBAL/../bin/deploykit" ]; then
-        success "deploykit-cli installed (may need PATH update)"
+    # Installed, but npm's global bin dir isn't on PATH
+    NPM_PREFIX=$(npm prefix -g)
+    if [ -x "$NPM_PREFIX/bin/deploykit" ]; then
+        warn "deploykit installed to $NPM_PREFIX/bin, which is not on your PATH"
+        echo "  Add it with: export PATH=\"$NPM_PREFIX/bin:\$PATH\""
     else
         error "Failed to install deploykit-cli"
         echo "  Try installing manually:"
@@ -141,7 +173,7 @@ echo -e "  Get started with:"
 echo -e "  ${BOLD}  deploykit init${NC}"
 echo ""
 echo -e "  This will:"
-echo "    • Install Nginx, PM2, Certbot"
+echo "    • Install Node.js LTS, Nginx, PM2, Certbot"
 echo "    • Clone your project from GitHub"
 echo "    • Configure environment variables"
 echo "    • Setup Nginx & SSL"

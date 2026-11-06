@@ -3,9 +3,9 @@
  * Handles starting apps with PM2, startup configuration, and log viewing.
  */
 
-import inquirer from 'inquirer';
+import { confirm, select } from '@inquirer/prompts';
 import logger from '../utils/logger.js';
-import shell from '../utils/shell.js';
+import shell, { quote } from '../utils/shell.js';
 import { PROJECT_TYPES, PM2_MAX_MEMORY } from '../utils/constants.js';
 
 /**
@@ -16,6 +16,7 @@ import { PROJECT_TYPES, PM2_MAX_MEMORY } from '../utils/constants.js';
  * @param {string} options.type - Project type (express, nextjs, etc.)
  * @param {string} options.entryPoint - Entry point file (e.g., server.js)
  * @param {number} options.port - Application port
+ * @param {string} [options.serverDir] - Server subdirectory (fullstack projects)
  */
 export async function setupPm2({ projectName, projectPath, type, entryPoint, port, serverDir }) {
   logger.step(5, 7, '⚡', 'PM2 Setup');
@@ -33,41 +34,35 @@ export async function setupPm2({ projectName, projectPath, type, entryPoint, por
   }
 
   // ── Build PM2 start command ────────────────────────────────────
-  let pm2Cmd;
+  const name = quote(projectName);
+  const common = `--name ${name} --cwd ${quote(workDir)} --max-memory-restart ${PM2_MAX_MEMORY} --time`;
+  const pm2Cmd =
+    type === PROJECT_TYPES.NEXTJS
+      ? `pm2 start npm ${common} -- start`
+      : `pm2 start ${quote(entryPoint || 'index.js')} ${common}`;
 
-  if (type === PROJECT_TYPES.NEXTJS) {
-    pm2Cmd = `pm2 start npm --name "${projectName}" --max-memory-restart ${PM2_MAX_MEMORY} -- start`;
-  } else {
-    pm2Cmd = `pm2 start ${entryPoint} --name "${projectName}" --max-memory-restart ${PM2_MAX_MEMORY}`;
-  }
-
-  // ── Set PORT environment variable for the PM2 process ──────────
-  if (port) {
-    pm2Cmd = `PORT=${port} ${pm2Cmd}`;
-  }
+  // ── Environment for the PM2 process ────────────────────────────
+  const env = { NODE_ENV: 'production' };
+  if (port) env.PORT = String(port);
 
   // ── Check if app already running in PM2 ────────────────────────
-  const { success: isRunning } = shell.execSafe(`pm2 describe "${projectName}"`);
+  const { success: isRunning } = shell.execSafe(`pm2 describe ${name}`);
   if (isRunning) {
-    const { action } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'action',
-        message: `"${projectName}" is already running in PM2. What to do?`,
-        choices: [
-          { name: 'Restart it', value: 'restart' },
-          { name: 'Delete & start fresh', value: 'fresh' },
-          { name: 'Skip PM2 setup', value: 'skip' },
-        ],
-      },
-    ]);
+    const action = await select({
+      message: `"${projectName}" is already running in PM2. What to do?`,
+      choices: [
+        { name: 'Restart it', value: 'restart' },
+        { name: 'Delete & start fresh', value: 'fresh' },
+        { name: 'Skip PM2 setup', value: 'skip' },
+      ],
+    });
 
     if (action === 'skip') return;
 
     if (action === 'restart') {
       const restartSpinner = logger.spinner('Restarting with PM2...');
       try {
-        shell.exec(`cd ${workDir} && pm2 restart "${projectName}"`);
+        shell.exec(`pm2 restart ${name} --update-env`, { cwd: workDir, env });
         restartSpinner.succeed(`${projectName} restarted with PM2`);
       } catch (err) {
         restartSpinner.fail('Failed to restart');
@@ -78,13 +73,13 @@ export async function setupPm2({ projectName, projectPath, type, entryPoint, por
     }
 
     // Delete existing
-    shell.execSafe(`pm2 delete "${projectName}"`);
+    shell.execSafe(`pm2 delete ${name}`);
   }
 
   // ── Start with PM2 ────────────────────────────────────────────
   const pm2Spinner = logger.spinner(`Starting ${projectName} with PM2...`);
   try {
-    shell.exec(`cd ${workDir} && ${pm2Cmd}`);
+    shell.exec(pm2Cmd, { cwd: workDir, env });
     pm2Spinner.succeed(`${projectName} started with PM2`);
   } catch (err) {
     pm2Spinner.fail('Failed to start with PM2');
@@ -113,16 +108,12 @@ export async function setupPm2({ projectName, projectPath, type, entryPoint, por
   }
 
   // ── Ask if user wants to see logs ──────────────────────────────
-  const { viewLogs } = await inquirer.prompt([
-    {
-      type: 'confirm',
-      name: 'viewLogs',
-      message: 'View PM2 logs now? (Ctrl+C to stop)',
-      default: false,
-    },
-  ]);
+  const wantLogs = await confirm({
+    message: 'View PM2 logs now? (Ctrl+C to stop)',
+    default: false,
+  });
 
-  if (viewLogs) {
+  if (wantLogs) {
     logger.info('Streaming logs... Press Ctrl+C to stop');
     try {
       await shell.execLive('pm2', ['logs', projectName, '--lines', '20']);
@@ -148,6 +139,19 @@ async function configurePm2Startup() {
 }
 
 /**
+ * Restart an existing PM2 app, picking up any changed environment.
+ * @param {string} projectName
+ * @returns {boolean} true if restarted
+ */
+export function restartPm2App(projectName) {
+  const name = quote(projectName);
+  if (!shell.execSafe(`pm2 describe ${name}`).success) return false;
+  shell.exec(`pm2 restart ${name} --update-env`, { env: { NODE_ENV: 'production' } });
+  shell.execSafe('pm2 save');
+  return true;
+}
+
+/**
  * View PM2 logs for a specific app or all apps
  * @param {string} [appName] - App name (optional, shows all if omitted)
  */
@@ -162,4 +166,4 @@ export async function viewLogs(appName) {
   }
 }
 
-export default { setupPm2, viewLogs };
+export default { setupPm2, viewLogs, restartPm2App };

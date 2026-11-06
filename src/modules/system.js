@@ -3,7 +3,8 @@
  * Handles system updates, swap configuration, and software installation.
  */
 
-import inquirer from 'inquirer';
+import { existsSync, readFileSync, appendFileSync } from 'fs';
+import { confirm, select } from '@inquirer/prompts';
 import logger from '../utils/logger.js';
 import shell from '../utils/shell.js';
 import {
@@ -12,8 +13,12 @@ import {
   SWAP_SIZE,
   SWAP_FILE,
   FIREWALL_PORTS,
+  DEFAULT_SSH_PORT,
+  MIN_NODE_MAJOR,
   DEPLOYKIT_CONFIG_DIR,
 } from '../utils/constants.js';
+
+const APT_ENV = { DEBIAN_FRONTEND: 'noninteractive' };
 
 /**
  * Run the full system setup:
@@ -41,8 +46,11 @@ export async function setupSystem() {
   // ── System Update ──────────────────────────────────────────────
   const updateSpinner = logger.spinner('Updating system packages...');
   try {
-    shell.exec('apt-get update -y', { silent: true });
-    shell.exec('DEBIAN_FRONTEND=noninteractive apt-get upgrade -y', { silent: true });
+    shell.exec('apt-get update -y', { env: APT_ENV });
+    shell.exec(
+      'apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y',
+      { env: APT_ENV }
+    );
     updateSpinner.succeed('System packages updated');
   } catch (err) {
     updateSpinner.fail('Failed to update system packages');
@@ -75,16 +83,38 @@ export async function setupSystem() {
 }
 
 /**
- * Get OS info (name and version)
+ * Get OS info (name and version) from /etc/os-release
+ * (lsb_release is not installed on minimal Ubuntu images).
  */
-function getOsInfo() {
+export function getOsInfo(osReleasePath = '/etc/os-release') {
   try {
-    const name = shell.exec('lsb_release -is');
-    const version = shell.exec('lsb_release -rs');
-    return { name, version };
+    if (!existsSync(osReleasePath)) return null;
+    const content = readFileSync(osReleasePath, 'utf-8');
+    const get = (key) => content.match(new RegExp(`^${key}="?([^"\\n]*)"?$`, 'm'))?.[1];
+    const name = get('NAME');
+    const version = get('VERSION_ID');
+    return name ? { name, version: version || '' } : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Detect the port sshd listens on, so enabling UFW never locks the user out.
+ * @returns {number}
+ */
+export function detectSshPort() {
+  // Effective sshd config (handles Include files and drop-ins)
+  const { success, output } = shell.execSafe('sshd -T 2>/dev/null | grep -i "^port "');
+  if (success && output) {
+    const port = parseInt(output.split(/\s+/)[1], 10);
+    if (port > 0 && port < 65536) return port;
+  }
+  // Fallback: what sshd is actually listening on
+  const ss = shell.execSafe(`ss -Htlnp 2>/dev/null | grep -m1 '"sshd"'`);
+  const match = ss.output.match(/:(\d+)\s/);
+  if (match) return parseInt(match[1], 10);
+  return DEFAULT_SSH_PORT;
 }
 
 /**
@@ -107,7 +137,10 @@ async function setupSwap() {
 
       const swapSpinner = logger.spinner('Creating swap file...');
       try {
-        shell.exec(`fallocate -l ${SWAP_SIZE} ${SWAP_FILE}`);
+        // fallocate is unsupported on some filesystems — fall back to dd
+        if (!shell.execSafe(`fallocate -l ${SWAP_SIZE} ${SWAP_FILE}`).success) {
+          shell.exec(`dd if=/dev/zero of=${SWAP_FILE} bs=1M count=${parseInt(SWAP_SIZE, 10) * 1024}`);
+        }
         shell.exec(`chmod 600 ${SWAP_FILE}`);
         shell.exec(`mkswap ${SWAP_FILE}`);
         shell.exec(`swapon ${SWAP_FILE}`);
@@ -120,7 +153,10 @@ async function setupSwap() {
 
         // Optimize swappiness for low-RAM servers
         shell.exec('sysctl vm.swappiness=10');
-        shell.exec("echo 'vm.swappiness=10' >> /etc/sysctl.conf");
+        const sysctlConf = existsSync('/etc/sysctl.conf') ? readFileSync('/etc/sysctl.conf', 'utf-8') : '';
+        if (!/^\s*vm\.swappiness\s*=/m.test(sysctlConf)) {
+          appendFileSync('/etc/sysctl.conf', '\nvm.swappiness=10\n');
+        }
 
         swapSpinner.succeed(`Swap file configured (${SWAP_SIZE})`);
       } catch (err) {
@@ -141,42 +177,43 @@ async function setupSwap() {
 async function installNodejs() {
   if (shell.isInstalled('node')) {
     const currentVersion = shell.getVersion('node');
-    logger.success(`Node.js v${currentVersion} already installed`);
+    const currentMajor = parseInt(currentVersion, 10);
+    const outdated = Number.isFinite(currentMajor) && currentMajor < MIN_NODE_MAJOR;
 
-    const { reinstall } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'reinstall',
-        message: `Node.js v${currentVersion} is already installed. Install a different version?`,
-        default: false,
-      },
-    ]);
+    if (outdated) {
+      logger.warn(`Node.js v${currentVersion} is end-of-life and no longer receives security updates`);
+    } else {
+      logger.success(`Node.js v${currentVersion} already installed`);
+    }
+
+    const reinstall = await confirm({
+      message: outdated
+        ? `Upgrade Node.js v${currentVersion} to a supported LTS version? (recommended)`
+        : `Node.js v${currentVersion} is already installed. Install a different version?`,
+      default: outdated,
+    });
 
     if (!reinstall) return;
   }
 
-  const { nodeVersion } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'nodeVersion',
-      message: 'Select Node.js version to install:',
-      choices: NODE_VERSIONS,
-      default: DEFAULT_NODE_VERSION,
-    },
-  ]);
+  const nodeVersion = await select({
+    message: 'Select Node.js version to install:',
+    choices: NODE_VERSIONS,
+    default: DEFAULT_NODE_VERSION,
+  });
 
   const nodeSpinner = logger.spinner(`Installing Node.js ${nodeVersion} LTS...`);
   try {
     // Install via NodeSource
-    shell.exec(`curl -fsSL https://deb.nodesource.com/setup_${nodeVersion}.x | bash -`);
-    shell.exec('apt-get install -y nodejs');
+    shell.exec(`curl -fsSL https://deb.nodesource.com/setup_${nodeVersion}.x | bash -`, { env: APT_ENV });
+    shell.exec('apt-get install -y nodejs', { env: APT_ENV });
 
     const installedVersion = shell.getVersion('node');
     nodeSpinner.succeed(`Node.js v${installedVersion} installed`);
   } catch (err) {
     nodeSpinner.fail('Failed to install Node.js');
     logger.dim(err.message);
-    throw new Error('Node.js installation failed — cannot continue');
+    throw new Error('Node.js installation failed — cannot continue', { cause: err });
   }
 }
 
@@ -195,7 +232,7 @@ async function installPackage(binary, displayName, installCmd) {
 
   const pkgSpinner = logger.spinner(`Installing ${displayName}...`);
   try {
-    shell.exec(installCmd, { silent: true });
+    shell.exec(installCmd, { env: APT_ENV });
     const version = shell.getVersion(binary);
     pkgSpinner.succeed(`${displayName} ${version ? `v${version}` : ''} installed`);
   } catch (err) {
@@ -212,18 +249,25 @@ async function configureFirewall() {
   try {
     // Install UFW if not present
     if (!shell.isInstalled('ufw')) {
-      shell.exec('apt-get install -y ufw');
+      shell.exec('apt-get install -y ufw', { env: APT_ENV });
     }
 
-    // Allow required ports
-    for (const port of FIREWALL_PORTS) {
-      shell.execSafe(`ufw allow ${port}`);
+    // Always allow SSH first — on its real port — so we never lock the user out
+    const sshPort = detectSshPort();
+    const ports = [`${sshPort}/tcp`, ...FIREWALL_PORTS.filter((p) => p !== `${sshPort}/tcp`)];
+
+    for (const port of ports) {
+      const { success, error } = shell.execSafe(`ufw allow ${port}`);
+      if (!success) throw new Error(`ufw allow ${port} failed: ${error}`);
     }
 
     // Enable UFW (non-interactive)
-    shell.execSafe('echo "y" | ufw enable');
+    shell.exec('ufw --force enable');
 
-    fwSpinner.succeed(`Firewall configured (ports: ${FIREWALL_PORTS.map((p) => p.split('/')[0]).join(', ')})`);
+    fwSpinner.succeed(`Firewall configured (ports: ${ports.map((p) => p.split('/')[0]).join(', ')})`);
+    if (sshPort !== DEFAULT_SSH_PORT) {
+      logger.info(`Detected SSH on custom port ${sshPort} — allowed through the firewall`);
+    }
   } catch (err) {
     fwSpinner.fail('Failed to configure firewall');
     logger.dim(err.message);

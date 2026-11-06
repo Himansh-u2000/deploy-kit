@@ -1,16 +1,23 @@
 {
   "name": "deploykit-cli",
-  "version": "1.2.8",
+  "version": "2.0.0",
   "description": "One-command VPS deployment CLI — automates server setup, Node.js deployment, Nginx, PM2, and SSL on Ubuntu servers",
   "type": "module",
   "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "deploykit": "./bin/cli.js"
   },
   "scripts": {
     "start": "node bin/cli.js",
-    "test": "node tests/validator.test.js",
-    "lint": "echo \"No linting configured yet\""
+    "test": "node --test \"tests/**/*.test.js\"",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "check": "npm run lint && npm test",
+    "prepublishOnly": "npm run check"
   },
   "keywords": [
     "deploy",
@@ -30,10 +37,10 @@
     "certbot",
     "lets-encrypt"
   ],
-  "author": "",
+  "author": "Himanshu Haldar (https://github.com/Himansh-u2000)",
   "license": "MIT",
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=22.12.0"
   },
   "repository": {
     "type": "git",
@@ -48,14 +55,20 @@
     "src/",
     "install.sh",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "dependencies": {
-    "boxen": "^7.1.1",
-    "chalk": "^5.3.0",
+    "@inquirer/prompts": "^8.7.5",
+    "boxen": "^9.0.0",
+    "chalk": "^6.0.1",
     "cli-table3": "^0.6.5",
-    "commander": "^12.1.0",
-    "inquirer": "^9.3.7",
-    "ora": "^8.1.1"
+    "commander": "^15.0.0",
+    "ora": "^10.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0"
   }
 }

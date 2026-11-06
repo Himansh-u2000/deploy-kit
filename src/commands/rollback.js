@@ -3,10 +3,13 @@
  * Roll back to a previous deployment snapshot.
  */
 
-import { existsSync, readdirSync } from 'fs';
-import inquirer from 'inquirer';
+import { existsSync, renameSync, rmSync } from 'fs';
+import { confirm, select } from '@inquirer/prompts';
 import logger from '../utils/logger.js';
-import shell from '../utils/shell.js';
+import shell, { quote } from '../utils/shell.js';
+import { listBackups, parseBackupName } from '../modules/git.js';
+import { restartPm2App } from '../modules/pm2.js';
+import { setWebPermissions } from '../modules/deployment.js';
 import { BACKUP_DIR, DEPLOY_DIR } from '../utils/constants.js';
 
 /**
@@ -22,65 +25,44 @@ export async function rollbackCommand(appName) {
   }
 
   // ── Check for backups ──────────────────────────────────────────
-  if (!existsSync(BACKUP_DIR)) {
+  const backups = listBackups();
+  if (backups.length === 0) {
     logger.error('No backups found. Backups are created automatically during deploys.');
     return;
   }
 
-  const backups = readdirSync(BACKUP_DIR, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name)
-    .sort()
-    .reverse();
-
-  if (backups.length === 0) {
-    logger.error('No backups found.');
-    return;
-  }
-
-  // ── Filter by app name if provided ─────────────────────────────
+  // ── Filter by app name if provided (exact project match) ───────
   let filteredBackups = backups;
   if (appName) {
-    filteredBackups = backups.filter((b) => b.startsWith(appName));
+    filteredBackups = listBackups(appName);
     if (filteredBackups.length === 0) {
+      const projects = [...new Set(backups.map((b) => parseBackupName(b).projectName))];
       logger.error(`No backups found for "${appName}"`);
-      logger.info('Available backups: ' + backups.join(', '));
+      logger.info('Projects with backups: ' + projects.join(', '));
       return;
     }
   }
 
   // ── Select backup to restore ───────────────────────────────────
-  const { backup } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'backup',
-      message: 'Select backup to restore:',
-      choices: filteredBackups.map((b) => {
-        const parts = b.match(/^(.+)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})$/);
-        const name = parts ? parts[1] : b;
-        const date = parts ? parts[2].replace(/-/g, ':').replace('T', ' ') : '';
-        return {
-          name: `${name} ${date ? `(${date})` : ''}`,
-          value: b,
-        };
-      }),
-    },
-  ]);
+  const backup = await select({
+    message: 'Select backup to restore:',
+    choices: filteredBackups.map((b) => {
+      const { projectName, timestamp } = parseBackupName(b);
+      const [date, time] = timestamp.split('T');
+      return { name: `${projectName} (${date} ${time.replace(/-/g, ':')} UTC)`, value: b };
+    }),
+  });
 
   // ── Extract project name ───────────────────────────────────────
-  const projectName = backup.replace(/-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/, '');
+  const { projectName } = parseBackupName(backup);
   const projectPath = `${DEPLOY_DIR}/${projectName}`;
   const backupPath = `${BACKUP_DIR}/${backup}`;
 
   // ── Confirm rollback ───────────────────────────────────────────
-  const { confirmed } = await inquirer.prompt([
-    {
-      type: 'confirm',
-      name: 'confirmed',
-      message: `Rollback "${projectName}" to backup "${backup}"? This will replace the current deployment.`,
-      default: false,
-    },
-  ]);
+  const confirmed = await confirm({
+    message: `Rollback "${projectName}" to backup "${backup}"? This will replace the current deployment.`,
+    default: false,
+  });
 
   if (!confirmed) {
     logger.info('Rollback cancelled');
@@ -88,32 +70,42 @@ export async function rollbackCommand(appName) {
   }
 
   // ── Perform rollback ───────────────────────────────────────────
+  // Copy the backup next to the live dir first, then swap, so a failed copy
+  // never leaves the project missing.
+  const stagingPath = `${projectPath}.rollback-${process.pid}`;
+  const previousPath = `${projectPath}.previous-${process.pid}`;
   const rollbackSpinner = logger.spinner('Rolling back...');
   try {
-    // Remove current deployment
-    if (existsSync(projectPath)) {
-      shell.exec(`rm -rf ${projectPath}`);
-    }
+    shell.exec(`cp -a ${quote(backupPath)} ${quote(stagingPath)}`);
 
-    // Copy backup to deployment directory
-    shell.exec(`cp -r ${backupPath} ${projectPath}`);
+    if (existsSync(projectPath)) renameSync(projectPath, previousPath);
+    renameSync(stagingPath, projectPath);
+    rmSync(previousPath, { recursive: true, force: true });
+
+    setWebPermissions(projectPath);
     rollbackSpinner.succeed(`Rolled back to ${backup}`);
 
     // Restart PM2 if applicable
-    const { success } = shell.execSafe(`pm2 describe "${projectName}"`);
-    if (success) {
-      shell.exec(`pm2 restart "${projectName}"`);
+    if (restartPm2App(projectName)) {
       logger.success(`PM2 process "${projectName}" restarted`);
     }
 
     // Reload Nginx
-    shell.execSafe('systemctl reload nginx');
-    logger.success('Nginx reloaded');
+    if (shell.execSafe('nginx -t').success) {
+      shell.execSafe('systemctl reload nginx');
+      logger.success('Nginx reloaded');
+    }
 
     logger.box('✅ Rollback Complete!', `"${projectName}" has been restored from:\n${backupPath}`, 'success');
   } catch (err) {
     rollbackSpinner.fail('Rollback failed');
     logger.dim(err.message);
+    // Put the original deployment back if we already moved it aside
+    if (!existsSync(projectPath) && existsSync(previousPath)) {
+      renameSync(previousPath, projectPath);
+      logger.info('Original deployment restored');
+    }
+    rmSync(stagingPath, { recursive: true, force: true });
     logger.error('Manual intervention may be required');
   }
 }

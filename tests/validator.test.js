@@ -2,151 +2,83 @@
  * DeployKit — Validator Tests
  */
 
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import validator from '../src/utils/validator.js';
 
-let passed = 0;
-let failed = 0;
+const ok = (v) => assert.equal(v, true);
+const bad = (v) => assert.equal(typeof v, 'string');
 
-function test(name, fn) {
-  try {
-    fn();
-    console.log(`  ✔ ${name}`);
-    passed++;
-  } catch (err) {
-    console.log(`  ✖ ${name}`);
-    console.log(`    ${err.message}`);
-    failed++;
+describe('isValidGitUrl', () => {
+  it('accepts HTTPS GitHub URL with .git', () => ok(validator.isValidGitUrl('https://github.com/user/repo.git')));
+  it('accepts HTTPS GitHub URL without .git', () => ok(validator.isValidGitUrl('https://github.com/user/repo')));
+  it('accepts HTTPS GitHub URL with trailing slash', () => ok(validator.isValidGitUrl('https://github.com/user/repo/')));
+  it('accepts SSH GitHub URL', () => ok(validator.isValidGitUrl('git@github.com:user/repo.git')));
+  it('accepts ssh:// URL', () => ok(validator.isValidGitUrl('ssh://git@gitlab.example.com/group/repo.git')));
+  it('accepts GitLab URL', () => ok(validator.isValidGitUrl('https://gitlab.com/user/repo.git')));
+  it('accepts self-hosted HTTPS URL', () => ok(validator.isValidGitUrl('https://git.example.com/team/app.git')));
+  it('accepts surrounding whitespace', () => ok(validator.isValidGitUrl('  https://github.com/user/repo.git ')));
+  it('rejects empty string', () => bad(validator.isValidGitUrl('')));
+  it('rejects random text', () => bad(validator.isValidGitUrl('not-a-url')));
+  it('rejects shell injection', () => bad(validator.isValidGitUrl('https://github.com/u/r.git; rm -rf /')));
+  it('rejects command substitution', () => bad(validator.isValidGitUrl('https://x.com/$(id)/r.git')));
+  it('rejects backticks', () => bad(validator.isValidGitUrl('https://x.com/`id`/r.git')));
+});
+
+describe('isValidBranch', () => {
+  for (const b of ['main', 'develop', 'feature/login', 'release-1.2', 'v2.0.0', 'fix_bug']) {
+    it(`accepts "${b}"`, () => ok(validator.isValidBranch(b)));
   }
-}
-
-function assert(condition, message) {
-  if (!condition) throw new Error(message || 'Assertion failed');
-}
-
-console.log('\n🧪 Validator Tests\n');
-
-// ── Git URL Validation ───────────────────────────────────────────
-console.log('  Git URL Validation:');
-
-test('accepts HTTPS GitHub URL with .git', () => {
-  assert(validator.isValidGitUrl('https://github.com/user/repo.git') === true);
+  for (const b of ['', ' ', 'main; rm -rf /', '$(id)', '-delete', 'a..b', 'a b', 'x.lock', 'a//b', '/main', 'main/', 'a:b', 'a@{1}']) {
+    it(`rejects ${JSON.stringify(b)}`, () => bad(validator.isValidBranch(b)));
+  }
 });
 
-test('accepts HTTPS GitHub URL without .git', () => {
-  assert(validator.isValidGitUrl('https://github.com/user/repo') === true);
+describe('isValidDomain', () => {
+  it('accepts example.com', () => ok(validator.isValidDomain('example.com')));
+  it('accepts sub.example.com', () => ok(validator.isValidDomain('sub.example.com')));
+  it('accepts app.my-site.io', () => ok(validator.isValidDomain('app.my-site.io')));
+  it('rejects just "localhost"', () => bad(validator.isValidDomain('localhost')));
+  it('rejects empty string', () => bad(validator.isValidDomain('')));
+  it('rejects labels starting with hyphen', () => bad(validator.isValidDomain('-bad.example.com')));
+  it('rejects shell metacharacters', () => bad(validator.isValidDomain('example.com;id')));
 });
 
-test('accepts SSH GitHub URL', () => {
-  assert(validator.isValidGitUrl('git@github.com:user/repo.git') === true);
+describe('isValidPort', () => {
+  it('accepts 3000', () => ok(validator.isValidPort('3000')));
+  it('accepts 8080 as number', () => ok(validator.isValidPort(8080)));
+  it('accepts 65535', () => ok(validator.isValidPort('65535')));
+  it('rejects 80 (privileged)', () => bad(validator.isValidPort('80')));
+  it('rejects 0', () => bad(validator.isValidPort('0')));
+  it('rejects "abc"', () => bad(validator.isValidPort('abc')));
+  it('rejects 99999', () => bad(validator.isValidPort('99999')));
+  it('rejects "3000abc" (parseInt would accept it)', () => bad(validator.isValidPort('3000abc')));
 });
 
-test('accepts GitLab URL', () => {
-  assert(validator.isValidGitUrl('https://gitlab.com/user/repo.git') === true);
+describe('isValidEmail', () => {
+  it('accepts user@example.com', () => ok(validator.isValidEmail('user@example.com')));
+  it('accepts user+tag@sub.example.com', () => ok(validator.isValidEmail('user+tag@sub.example.com')));
+  it('rejects "not-an-email"', () => bad(validator.isValidEmail('not-an-email')));
+  it('rejects empty string', () => bad(validator.isValidEmail('')));
+  it('rejects shell injection', () => bad(validator.isValidEmail('a@b.com;reboot')));
 });
 
-test('rejects empty string', () => {
-  assert(typeof validator.isValidGitUrl('') === 'string');
+describe('isValidAppName', () => {
+  it('accepts "my-app"', () => ok(validator.isValidAppName('my-app')));
+  it('accepts "app_v2"', () => ok(validator.isValidAppName('app_v2')));
+  it('rejects single char', () => bad(validator.isValidAppName('a')));
+  it('rejects "-starts-with-hyphen"', () => bad(validator.isValidAppName('-starts-with-hyphen')));
+  it('rejects path traversal', () => bad(validator.isValidAppName('../etc')));
 });
 
-test('rejects random text', () => {
-  assert(typeof validator.isValidGitUrl('not-a-url') === 'string');
+describe('isValidRelativePath', () => {
+  it('accepts client/dist', () => ok(validator.isValidRelativePath('client/dist')));
+  it('rejects absolute paths', () => bad(validator.isValidRelativePath('/etc')));
+  it('rejects traversal', () => bad(validator.isValidRelativePath('client/../../etc')));
 });
 
-// ── Domain Validation ────────────────────────────────────────────
-console.log('\n  Domain Validation:');
-
-test('accepts example.com', () => {
-  assert(validator.isValidDomain('example.com') === true);
+describe('isNotEmpty', () => {
+  it('rejects whitespace', () => bad(validator.isNotEmpty('   ')));
+  it('does not crash on non-strings', () => ok(validator.isNotEmpty(42)));
+  it('rejects undefined', () => bad(validator.isNotEmpty(undefined)));
 });
-
-test('accepts sub.example.com', () => {
-  assert(validator.isValidDomain('sub.example.com') === true);
-});
-
-test('accepts app.my-site.io', () => {
-  assert(validator.isValidDomain('app.my-site.io') === true);
-});
-
-test('rejects just "localhost"', () => {
-  assert(typeof validator.isValidDomain('localhost') === 'string');
-});
-
-test('rejects empty string', () => {
-  assert(typeof validator.isValidDomain('') === 'string');
-});
-
-// ── Port Validation ──────────────────────────────────────────────
-console.log('\n  Port Validation:');
-
-test('accepts 3000', () => {
-  assert(validator.isValidPort('3000') === true);
-});
-
-test('accepts 8080', () => {
-  assert(validator.isValidPort('8080') === true);
-});
-
-test('accepts 65535', () => {
-  assert(validator.isValidPort('65535') === true);
-});
-
-test('rejects 80 (privileged)', () => {
-  assert(typeof validator.isValidPort('80') === 'string');
-});
-
-test('rejects 0', () => {
-  assert(typeof validator.isValidPort('0') === 'string');
-});
-
-test('rejects "abc"', () => {
-  assert(typeof validator.isValidPort('abc') === 'string');
-});
-
-test('rejects 99999', () => {
-  assert(typeof validator.isValidPort('99999') === 'string');
-});
-
-// ── Email Validation ─────────────────────────────────────────────
-console.log('\n  Email Validation:');
-
-test('accepts user@example.com', () => {
-  assert(validator.isValidEmail('user@example.com') === true);
-});
-
-test('accepts user+tag@sub.example.com', () => {
-  assert(validator.isValidEmail('user+tag@sub.example.com') === true);
-});
-
-test('rejects "not-an-email"', () => {
-  assert(typeof validator.isValidEmail('not-an-email') === 'string');
-});
-
-test('rejects empty string', () => {
-  assert(typeof validator.isValidEmail('') === 'string');
-});
-
-// ── App Name Validation ──────────────────────────────────────────
-console.log('\n  App Name Validation:');
-
-test('accepts "my-app"', () => {
-  assert(validator.isValidAppName('my-app') === true);
-});
-
-test('accepts "app_v2"', () => {
-  assert(validator.isValidAppName('app_v2') === true);
-});
-
-test('rejects single char', () => {
-  assert(typeof validator.isValidAppName('a') === 'string');
-});
-
-test('rejects "-starts-with-hyphen"', () => {
-  assert(typeof validator.isValidAppName('-starts-with-hyphen') === 'string');
-});
-
-// ── Summary ──────────────────────────────────────────────────────
-console.log(`\n  Results: ${passed} passed, ${failed} failed\n`);
-
-if (failed > 0) {
-  process.exit(1);
-}
