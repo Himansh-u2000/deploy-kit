@@ -14,7 +14,6 @@
  *   deploykit rollback [app]    Rollback to previous deployment
  */
 
-import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -22,6 +21,22 @@ import { dirname, join } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
+
+// ── Node.js version guard ────────────────────────────────────────
+// Checked before importing dependencies so users on an old Node get a
+// clear message instead of a cryptic syntax/import error.
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 22 || (major === 22 && minor < 12)) {
+  console.error(
+    `\n  ✖ DeployKit v${pkg.version} requires Node.js >= 22.12 (you have v${process.versions.node}).\n` +
+      '    Node.js 18 and 20 are end-of-life. Upgrade with:\n\n' +
+      '    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo bash -\n' +
+      '    sudo apt-get install -y nodejs\n'
+  );
+  process.exit(1);
+}
+
+const { Command } = await import('commander');
 
 const program = new Command();
 
@@ -93,10 +108,28 @@ program
     await rollbackCommand(app);
   });
 
-// ── Parse and run ────────────────────────────────────────────────
-program.parse(process.argv);
+// ── Graceful exit on Ctrl+C ──────────────────────────────────────
+process.on('SIGINT', () => {
+  console.log('\n  Cancelled.');
+  process.exit(130);
+});
 
+// ── Parse and run ────────────────────────────────────────────────
 // Show help if no command is provided
 if (!process.argv.slice(2).length) {
   program.outputHelp();
+  process.exit(0);
+}
+
+try {
+  await program.parseAsync(process.argv);
+} catch (err) {
+  // @inquirer/prompts throws ExitPromptError when the user presses Ctrl+C
+  if (err?.name === 'ExitPromptError' || err?.name === 'AbortPromptError') {
+    console.log('\n  Cancelled.');
+    process.exit(130);
+  }
+  console.error(`\n  ✖ ${err?.message || err}`);
+  if (process.env.DEBUG) console.error(err);
+  process.exit(1);
 }

@@ -3,10 +3,11 @@
  * Manage Nginx configurations interactively.
  */
 
-import { existsSync, readdirSync, readFileSync } from 'fs';
-import inquirer from 'inquirer';
+import { readdirSync, readFileSync, unlinkSync } from 'fs';
+import { select } from '@inquirer/prompts';
 import logger from '../utils/logger.js';
 import shell from '../utils/shell.js';
+import { enableSiteLink } from '../modules/nginx.js';
 import { NGINX_SITES_AVAILABLE, NGINX_SITES_ENABLED } from '../utils/constants.js';
 
 /**
@@ -18,22 +19,18 @@ export async function nginxCommand() {
     process.exit(1);
   }
 
-  const { action } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'action',
-      message: 'Nginx Management:',
-      choices: [
-        { name: '📋  List all configs', value: 'list' },
-        { name: '👁  View a config', value: 'view' },
-        { name: '📝  Edit a config', value: 'edit' },
-        { name: '🔄  Reload Nginx', value: 'reload' },
-        { name: '🧪  Test configuration', value: 'test' },
-        { name: '🔴  Disable a site', value: 'disable' },
-        { name: '🟢  Enable a site', value: 'enable' },
-      ],
-    },
-  ]);
+  const action = await select({
+    message: 'Nginx Management:',
+    choices: [
+      { name: '📋  List all configs', value: 'list' },
+      { name: '👁  View a config', value: 'view' },
+      { name: '📝  Edit a config', value: 'edit' },
+      { name: '🔄  Reload Nginx', value: 'reload' },
+      { name: '🧪  Test configuration', value: 'test' },
+      { name: '🔴  Disable a site', value: 'disable' },
+      { name: '🟢  Enable a site', value: 'enable' },
+    ],
+  });
 
   switch (action) {
     case 'list':
@@ -80,9 +77,7 @@ async function viewConfig() {
   const sites = getSites();
   if (sites.length === 0) return;
 
-  const { site } = await inquirer.prompt([
-    { type: 'list', name: 'site', message: 'Select config to view:', choices: sites },
-  ]);
+  const site = await select({ message: 'Select config to view:', choices: sites });
 
   try {
     const content = readFileSync(`${NGINX_SITES_AVAILABLE}/${site}`, 'utf-8');
@@ -96,11 +91,9 @@ async function editConfig() {
   const sites = getSites();
   if (sites.length === 0) return;
 
-  const { site } = await inquirer.prompt([
-    { type: 'list', name: 'site', message: 'Select config to edit:', choices: sites },
-  ]);
+  const site = await select({ message: 'Select config to edit:', choices: sites });
 
-  const editor = shell.isInstalled('nano') ? 'nano' : 'vim';
+  const editor = process.env.VISUAL || process.env.EDITOR || (shell.isInstalled('nano') ? 'nano' : 'vim');
   logger.info(`Opening ${editor}... Save and close when done.`);
 
   try {
@@ -108,26 +101,35 @@ async function editConfig() {
     logger.success('Config saved');
 
     // Test and reload
-    const { success } = shell.execSafe('nginx -t 2>&1');
-    if (success) {
-      shell.exec('systemctl reload nginx');
-      logger.success('Nginx reloaded');
-    } else {
-      logger.error('Config test failed — Nginx NOT reloaded');
-    }
+    testAndReload();
   } catch {
     logger.warn('Editor closed');
   }
 }
 
 async function reloadNginx() {
-  const { success } = shell.execSafe('nginx -t 2>&1');
-  if (success) {
-    shell.exec('systemctl reload nginx');
-    logger.success('Nginx reloaded successfully');
-  } else {
-    logger.error('Config test failed — cannot reload');
+  testAndReload();
+}
+
+/**
+ * Test the Nginx config and reload only if it passes.
+ * @returns {boolean} true if reloaded
+ */
+function testAndReload() {
+  const test = shell.execSafe('nginx -t 2>&1');
+  if (!test.success) {
+    logger.error('Config test failed — Nginx NOT reloaded');
+    logger.dim(test.output || test.error);
+    return false;
   }
+  const reload = shell.execSafe('systemctl reload nginx');
+  if (reload.success) {
+    logger.success('Nginx reloaded successfully');
+    return true;
+  }
+  logger.error('Failed to reload Nginx');
+  logger.dim(reload.error);
+  return false;
 }
 
 function testConfig() {
@@ -147,13 +149,16 @@ async function disableSite() {
     return;
   }
 
-  const { site } = await inquirer.prompt([
-    { type: 'list', name: 'site', message: 'Select site to disable:', choices: enabled },
-  ]);
+  const site = await select({ message: 'Select site to disable:', choices: enabled });
 
-  shell.execSafe(`rm -f ${NGINX_SITES_ENABLED}/${site}`);
-  shell.exec('systemctl reload nginx');
-  logger.success(`${site} disabled and Nginx reloaded`);
+  try {
+    unlinkSync(`${NGINX_SITES_ENABLED}/${site}`);
+  } catch (err) {
+    logger.error(`Could not disable ${site}: ${err.message}`);
+    return;
+  }
+  logger.success(`${site} disabled`);
+  testAndReload();
 }
 
 async function enableSite() {
@@ -166,13 +171,21 @@ async function enableSite() {
     return;
   }
 
-  const { site } = await inquirer.prompt([
-    { type: 'list', name: 'site', message: 'Select site to enable:', choices: disabled },
-  ]);
+  const site = await select({ message: 'Select site to enable:', choices: disabled });
 
-  shell.execSafe(`ln -s ${NGINX_SITES_AVAILABLE}/${site} ${NGINX_SITES_ENABLED}/${site}`);
-  shell.exec('systemctl reload nginx');
-  logger.success(`${site} enabled and Nginx reloaded`);
+  const enabledPath = `${NGINX_SITES_ENABLED}/${site}`;
+  try {
+    enableSiteLink(`${NGINX_SITES_AVAILABLE}/${site}`, enabledPath);
+  } catch (err) {
+    logger.error(`Could not enable ${site}: ${err.message}`);
+    return;
+  }
+  logger.success(`${site} enabled`);
+  if (!testAndReload()) {
+    // Don't leave a broken site enabled — it would block every future reload
+    unlinkSync(enabledPath);
+    logger.warn(`${site} was disabled again because its config is invalid`);
+  }
 }
 
 function getSites() {

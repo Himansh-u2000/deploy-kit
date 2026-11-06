@@ -4,12 +4,20 @@
  */
 
 export { setupSystem } from './modules/system.js';
-export { cloneProject, backupProject } from './modules/git.js';
-export { detectProject } from './modules/project.js';
+export {
+  cloneProject,
+  backupProject,
+  installDependencies,
+  listBackups,
+  pruneBackups,
+} from './modules/git.js';
+export { detectProject, buildProject } from './modules/project.js';
 export { setupEnv } from './modules/env.js';
-export { setupPm2, viewLogs } from './modules/pm2.js';
-export { setupNginx } from './modules/nginx.js';
+export { setupPm2, viewLogs, restartPm2App } from './modules/pm2.js';
+export { setupNginx, generateConfig } from './modules/nginx.js';
 export { setupSsl, sslCommand } from './modules/ssl.js';
+export { deployProject, readDeployments, saveDeployment } from './modules/deployment.js';
+export { default as validator } from './utils/validator.js';
 
 export { default as initCommand } from './commands/init.js';
 export { default as deployCommand } from './commands/deploy.js';

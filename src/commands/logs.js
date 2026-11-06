@@ -3,11 +3,9 @@
  * Stream PM2 logs for an app.
  */
 
-import { readdirSync, existsSync } from 'fs';
-import inquirer from 'inquirer';
+import { select } from '@inquirer/prompts';
 import logger from '../utils/logger.js';
 import shell from '../utils/shell.js';
-import { DEPLOY_DIR } from '../utils/constants.js';
 
 /**
  * View PM2 logs for a specific app or all apps.
@@ -36,17 +34,14 @@ export async function logsCommand(appName) {
         })),
       ];
 
-      const { selected } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'selected',
-          message: 'Which app logs do you want to view?',
-          choices,
-        },
-      ]);
+      const selected = await select({
+        message: 'Which app logs do you want to view?',
+        choices,
+      });
 
       appName = selected === '__all__' ? undefined : selected;
-    } catch {
+    } catch (err) {
+      if (err?.name === 'ExitPromptError') throw err;
       logger.warn('Could not list PM2 processes — showing all logs');
     }
   }

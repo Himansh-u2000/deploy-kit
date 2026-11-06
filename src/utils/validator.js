@@ -3,6 +3,10 @@
  * Validation functions for user inputs — Git URLs, domains, ports, emails.
  */
 
+// Characters that have special meaning to the shell. User input containing
+// these is rejected up-front (values are also quoted when used in commands).
+const SHELL_META = /[\s;&|`$<>(){}[\]\\'"!*?#~]/;
+
 const validator = {
   /**
    * Validate a Git repository URL (HTTPS or SSH).
@@ -14,14 +18,45 @@ const validator = {
     if (!url || typeof url !== 'string') {
       return 'Please enter a Git repository URL';
     }
-    const httpsPattern = /^https:\/\/.+\/.+\.git$/;
-    const sshPattern = /^git@.+:.+\/.+\.git$/;
-    const httpsNoGit = /^https:\/\/(github|gitlab|bitbucket)\.(com|org)\/.+\/.+$/;
+    const value = url.trim();
+    if (SHELL_META.test(value)) {
+      return 'Git URL contains invalid characters';
+    }
+    const httpsPattern = /^https:\/\/[^/]+\/.+\.git$/;
+    const sshPattern = /^(ssh:\/\/)?[\w.-]+@[\w.-]+[:/].+\/.+\.git$/;
+    const httpsNoGit = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[^/]+\/[^/]+\/?$/;
 
-    if (httpsPattern.test(url) || sshPattern.test(url) || httpsNoGit.test(url)) {
+    if (httpsPattern.test(value) || sshPattern.test(value) || httpsNoGit.test(value)) {
       return true;
     }
     return 'Invalid Git URL. Use format: https://github.com/user/repo.git or git@github.com:user/repo.git';
+  },
+
+  /**
+   * Validate a Git branch name (subset of git check-ref-format rules).
+   * @param {string} branch
+   * @returns {boolean|string}
+   */
+  isValidBranch(branch) {
+    if (!branch || typeof branch !== 'string' || !branch.trim()) {
+      return 'Please enter a branch name';
+    }
+    const value = branch.trim();
+    if (
+      SHELL_META.test(value) ||
+      value.startsWith('-') ||
+      value.startsWith('/') ||
+      value.endsWith('/') ||
+      value.endsWith('.lock') ||
+      value.includes('..') ||
+      value.includes('//') ||
+      value.includes('@{') ||
+      // eslint-disable-next-line no-control-regex -- rejecting control chars is the point
+      /[\x00-\x1f\x7f^:]/.test(value)
+    ) {
+      return 'Invalid branch name';
+    }
+    return true;
   },
 
   /**
@@ -33,8 +68,9 @@ const validator = {
     if (!domain || typeof domain !== 'string') {
       return 'Please enter a domain name';
     }
-    const pattern = /^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
-    if (pattern.test(domain)) {
+    const value = domain.trim();
+    const pattern = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/;
+    if (value.length <= 253 && pattern.test(value)) {
       return true;
     }
     return 'Invalid domain name. Example: example.com or app.example.com';
@@ -46,10 +82,10 @@ const validator = {
    * @returns {boolean|string} true if valid, error message if invalid
    */
   isValidPort(port) {
-    const num = parseInt(port, 10);
-    if (isNaN(num)) {
+    if (!/^\d+$/.test(String(port).trim())) {
       return 'Port must be a number';
     }
+    const num = parseInt(port, 10);
     if (num < 1024 || num > 65535) {
       return 'Port must be between 1024 and 65535';
     }
@@ -65,8 +101,8 @@ const validator = {
     if (!email || typeof email !== 'string') {
       return 'Please enter an email address';
     }
-    const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (pattern.test(email)) {
+    const pattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
+    if (pattern.test(email.trim())) {
       return true;
     }
     return 'Invalid email address';
@@ -89,12 +125,28 @@ const validator = {
   },
 
   /**
+   * Validate a relative path inside the project (e.g. a build dir).
+   * @param {string} value
+   * @returns {boolean|string}
+   */
+  isValidRelativePath(value) {
+    if (!value || typeof value !== 'string' || !value.trim()) {
+      return 'Please enter a path';
+    }
+    const v = value.trim();
+    if (v.startsWith('/') || v.split('/').includes('..') || SHELL_META.test(v)) {
+      return 'Path must be relative to the project and contain no special characters';
+    }
+    return true;
+  },
+
+  /**
    * Non-empty validation (for required fields).
    * @param {string} value
    * @returns {boolean|string}
    */
   isNotEmpty(value) {
-    if (!value || value.trim().length === 0) {
+    if (value == null || String(value).trim().length === 0) {
       return 'This field is required';
     }
     return true;
